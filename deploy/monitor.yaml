@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: longhorn-monitor
+  namespace: longhorn-addon
+  labels:
+    app: longhorn-monitor
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: longhorn-monitor
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: longhorn-monitor
+  namespace: longhorn-addon
+  labels:
+    app: longhorn-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: longhorn-monitor
+  template:
+    metadata:
+      labels:
+        app: longhorn-monitor
+    spec:
+      serviceAccountName: longhorn-monitor-service-account
+      containers:
+        - name: longhorn-monitor
+          image: derfetzer/longhorn-monitor:dev
+          command: ["/usr/local/bin/longhorn-monitor/monitor"]
+          imagePullPolicy: Always
+          env:
+          - name: RESTART_THRESHOLD
+            value: "3"

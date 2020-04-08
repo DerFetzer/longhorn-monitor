@@ -1,0 +1,50 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: longhorn-monitor-webhook
+  namespace: longhorn-addon
+  labels:
+    app: longhorn-monitor-webhook
+spec:
+  ports:
+  - port: 443
+    targetPort: 8080
+  selector:
+    app: longhorn-monitor-webhook
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: longhorn-monitor-webhook
+  namespace: longhorn-addon
+  labels:
+    app: longhorn-monitor-webhook
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: longhorn-monitor-webhook
+  template:
+    metadata:
+      labels:
+        app: longhorn-monitor-webhook
+    spec:
+      containers:
+        - name: longhorn-monitor-webhook
+          image: derfetzer/longhorn-monitor:dev
+          imagePullPolicy: Always
+          args:
+            - -tls-cert-file=/etc/webhook/certs/cert.pem
+            - -tls-key-file=/etc/webhook/certs/key.pem
+          env:
+          - name: MONITOR_SVC
+            value: "http://longhorn-monitor.longhorn-addon.svc:8080"
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: longhorn-monitor-webhook-certs
