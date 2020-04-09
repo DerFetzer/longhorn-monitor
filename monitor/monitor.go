@@ -84,11 +84,11 @@ func initWebServer(healthMonitor *apiserver.HealthMonitor) *echo.Echo {
 	return e
 }
 
-func initHealthMonitor(podDeletes chan<- apiserver.PodIdentifier, config *MonitorConfig) *apiserver.HealthMonitor {
-	return apiserver.NewHealthMonitor(podDeletes, config.RestartThreshold)
+func initHealthMonitor(podDeletes chan<- apiserver.PodIdentifier, deleteResults <-chan apiserver.PodDeleteResult, config *MonitorConfig) *apiserver.HealthMonitor {
+	return apiserver.NewHealthMonitor(podDeletes, deleteResults, config.RestartThreshold)
 }
 
-func deletePod(podDeletes <-chan apiserver.PodIdentifier, clientset kubernetes.Interface) {
+func deletePod(podDeletes <-chan apiserver.PodIdentifier, deleteResults chan<- apiserver.PodDeleteResult, clientset kubernetes.Interface) {
 	for {
 		podIdentifier := <-podDeletes
 		podClient := clientset.CoreV1().Pods(podIdentifier.Namespace)
@@ -101,7 +101,10 @@ func deletePod(podDeletes <-chan apiserver.PodIdentifier, clientset kubernetes.I
 			panic(err.Error())
 		} else {
 			fmt.Printf("Pod %v deleted\n", podIdentifier.Name)
+			deleteResults <- apiserver.PodDeleteResult{Identifier: podIdentifier, Success: true}
+			return
 		}
+		deleteResults <- apiserver.PodDeleteResult{Identifier: podIdentifier, Success: false}
 	}
 }
 
@@ -112,14 +115,15 @@ func main() {
 	config := initConfig()
 	clientset := initKubernetes()
 	podDeletes := make(chan apiserver.PodIdentifier)
-	healthMonitor := initHealthMonitor(podDeletes, config)
+	deleteResults := make(chan apiserver.PodDeleteResult)
+	healthMonitor := initHealthMonitor(podDeletes, deleteResults, config)
 	e := initWebServer(healthMonitor)
 
 	if config.Debug {
 		e.Debug = true
 	}
 
-	go deletePod(podDeletes, clientset)
+	go deletePod(podDeletes, deleteResults, clientset)
 
 	// And we serve HTTP until the world ends.
 	e.Logger.Fatal(e.Start(fmt.Sprintf("0.0.0.0:%d", *port)))

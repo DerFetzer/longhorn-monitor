@@ -19,8 +19,9 @@ func TestHealthMonitor(t *testing.T) {
 	assert := assert.New(t)
 
 	podDeletes := make(chan apiserver.PodIdentifier, 1)
+	deleteResults := make(chan apiserver.PodDeleteResult, 1)
 
-	healthMonitor := initHealthMonitor(podDeletes, &MonitorConfig{RestartThreshold: 4})
+	healthMonitor := initHealthMonitor(podDeletes, deleteResults, &MonitorConfig{RestartThreshold: 4})
 
 	e := initWebServer(healthMonitor)
 
@@ -29,7 +30,7 @@ func TestHealthMonitor(t *testing.T) {
 	q.Set("namespace", "default")
 	q.Set("isHealthy", "true")
 
-	result := testutil.NewRequest().Post("/health?"+q.Encode()).Go(t, e)
+	result := testutil.NewRequest().Post("/podHealth?"+q.Encode()).Go(t, e)
 	assert.Equal(http.StatusCreated, result.Code())
 	assert.Empty(podDeletes)
 
@@ -38,17 +39,29 @@ func TestHealthMonitor(t *testing.T) {
 	q.Set("namespace", "default")
 	q.Set("isHealthy", "true")
 
-	result = testutil.NewRequest().Post("/health?"+q.Encode()).Go(t, e)
+	result = testutil.NewRequest().Post("/podHealth?"+q.Encode()).Go(t, e)
 	assert.Equal(http.StatusCreated, result.Code())
 
-	result = testutil.NewRequest().Get("/health").Go(t, e)
+	result = testutil.NewRequest().Get("/podHealth").Go(t, e)
 	var resultList []apiserver.PodHealth
 	assert.Equal(http.StatusOK, result.Code())
 	err := result.UnmarshalBodyToObject(&resultList)
 	assert.NoError(err, "error unmarshaling response")
 	assert.Equal(2, len(resultList))
-	assert.Contains(resultList, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod", Namespace: "default", IsDeleted: false})
-	assert.Contains(resultList, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod2", Namespace: "default", IsDeleted: false})
+	assert.Contains(resultList, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
+	assert.Contains(resultList, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod2",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
 	assert.Empty(podDeletes)
 
 	q = make(url.Values)
@@ -57,21 +70,33 @@ func TestHealthMonitor(t *testing.T) {
 	q.Set("isHealthy", "false")
 
 	for i := 0; i < 3; i++ {
-		result := testutil.NewRequest().Post("/health?"+q.Encode()).Go(t, e)
+		result := testutil.NewRequest().Post("/podHealth?"+q.Encode()).Go(t, e)
 		assert.Equal(http.StatusOK, result.Code())
 	}
 
-	result = testutil.NewRequest().Get("/health").Go(t, e)
+	result = testutil.NewRequest().Get("/podHealth").Go(t, e)
 	var resultList2 []apiserver.PodHealth
 	assert.Equal(http.StatusOK, result.Code())
 	err = result.UnmarshalBodyToObject(&resultList2)
 	assert.NoError(err, "error unmarshaling response")
 	assert.Equal(2, len(resultList2))
-	assert.Contains(resultList2, apiserver.PodHealth{ErrorCount: 3, IsHealthy: false, PodName: "testPod", Namespace: "default", IsDeleted: false})
-	assert.Contains(resultList2, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod2", Namespace: "default", IsDeleted: false})
+	assert.Contains(resultList2, apiserver.PodHealth{
+		ErrorCount: 3,
+		IsHealthy:  false,
+		PodName:    "testPod",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
+	assert.Contains(resultList2, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod2",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
 	assert.Empty(podDeletes)
 
-	result = testutil.NewRequest().Post("/health?"+q.Encode()).Go(t, e)
+	result = testutil.NewRequest().Post("/podHealth?"+q.Encode()).Go(t, e)
 	assert.Equal(http.StatusOK, result.Code())
 
 	if assert.NotEmpty(podDeletes) {
@@ -79,14 +104,37 @@ func TestHealthMonitor(t *testing.T) {
 		assert.Equal(apiserver.PodIdentifier{Name: "testPod", Namespace: "default"}, <-podDeletes)
 	}
 
-	result = testutil.NewRequest().Get("/health").Go(t, e)
+	// Simulate successful delete
+	deleteResults <- apiserver.PodDeleteResult{
+		Identifier: apiserver.PodIdentifier{
+			Name:      "testPod",
+			Namespace: "default",
+		},
+		Success: true,
+	}
+
+	time.Sleep(100 * time.Millisecond)
+
+	result = testutil.NewRequest().Get("/podHealth").Go(t, e)
 	var resultList3 []apiserver.PodHealth
 	assert.Equal(http.StatusOK, result.Code())
 	err = result.UnmarshalBodyToObject(&resultList3)
 	assert.NoError(err, "error unmarshaling response")
 	assert.Equal(2, len(resultList3))
-	assert.Contains(resultList3, apiserver.PodHealth{ErrorCount: 4, IsHealthy: false, PodName: "testPod", Namespace: "default", IsDeleted: true})
-	assert.Contains(resultList3, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod2", Namespace: "default", IsDeleted: false})
+	assert.Contains(resultList3, apiserver.PodHealth{
+		ErrorCount: 4,
+		IsHealthy:  false,
+		PodName:    "testPod",
+		Namespace:  "default",
+		IsDeleted:  true,
+	})
+	assert.Contains(resultList3, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod2",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
 	assert.Empty(podDeletes)
 
 	q = make(url.Values)
@@ -94,33 +142,51 @@ func TestHealthMonitor(t *testing.T) {
 	q.Set("namespace", "default")
 	q.Set("isHealthy", "true")
 
-	result = testutil.NewRequest().Post("/health?"+q.Encode()).Go(t, e)
-	assert.Equal(http.StatusOK, result.Code())
+	result = testutil.NewRequest().Post("/podHealth?"+q.Encode()).Go(t, e)
+	assert.Equal(http.StatusInternalServerError, result.Code())
 
-	result = testutil.NewRequest().Get("/health").Go(t, e)
+	result = testutil.NewRequest().Get("/podHealth").Go(t, e)
 	var resultList4 []apiserver.PodHealth
 	assert.Equal(http.StatusOK, result.Code())
 	err = result.UnmarshalBodyToObject(&resultList4)
 	assert.NoError(err, "error unmarshaling response")
 	assert.Equal(2, len(resultList4))
-	assert.Contains(resultList4, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod", Namespace: "default", IsDeleted: true})
-	assert.Contains(resultList4, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod2", Namespace: "default", IsDeleted: false})
+	assert.Contains(resultList4, apiserver.PodHealth{
+		ErrorCount: 4,
+		IsHealthy:  false,
+		PodName:    "testPod",
+		Namespace:  "default",
+		IsDeleted:  true,
+	})
+	assert.Contains(resultList4, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod2",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
 	assert.Empty(podDeletes)
 
 	q = make(url.Values)
 	q.Set("podName", "testPod")
 	q.Set("namespace", "default")
 
-	result = testutil.NewRequest().Delete("/health?"+q.Encode()).Go(t, e)
+	result = testutil.NewRequest().Delete("/podHealth?"+q.Encode()).Go(t, e)
 	assert.Equal(http.StatusOK, result.Code())
 
-	result = testutil.NewRequest().Get("/health").Go(t, e)
+	result = testutil.NewRequest().Get("/podHealth").Go(t, e)
 	var resultList5 []apiserver.PodHealth
 	assert.Equal(http.StatusOK, result.Code())
 	err = result.UnmarshalBodyToObject(&resultList5)
 	assert.NoError(err, "error unmarshaling response")
 	assert.Equal(1, len(resultList5))
-	assert.Contains(resultList5, apiserver.PodHealth{ErrorCount: 0, IsHealthy: true, PodName: "testPod2", Namespace: "default", IsDeleted: false})
+	assert.Contains(resultList5, apiserver.PodHealth{
+		ErrorCount: 0,
+		IsHealthy:  true,
+		PodName:    "testPod2",
+		Namespace:  "default",
+		IsDeleted:  false,
+	})
 	assert.Empty(podDeletes)
 }
 
@@ -137,7 +203,8 @@ func TestDeletePod(t *testing.T) {
 	)
 
 	podDeletes := make(chan apiserver.PodIdentifier)
-	go deletePod(podDeletes, clientset)
+	deleteResults := make(chan apiserver.PodDeleteResult, 1)
+	go deletePod(podDeletes, deleteResults, clientset)
 
 	l, _ := clientset.CoreV1().Pods("").List(metav1.ListOptions{})
 	assert.Equal(2, len(l.Items))
@@ -149,6 +216,16 @@ func TestDeletePod(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
+	if assert.NotEmpty(deleteResults) {
+		assert.Equal(1, len(deleteResults))
+		assert.Equal(apiserver.PodDeleteResult{
+			Identifier: apiserver.PodIdentifier{
+				Name:      "unknown",
+				Namespace: "default",
+			},
+			Success: false}, <-deleteResults)
+	}
+
 	l, _ = clientset.CoreV1().Pods("").List(metav1.ListOptions{})
 	assert.Equal(2, len(l.Items))
 
@@ -158,6 +235,16 @@ func TestDeletePod(t *testing.T) {
 	}
 
 	time.Sleep(100 * time.Millisecond)
+
+	if assert.NotEmpty(deleteResults) {
+		assert.Equal(1, len(deleteResults))
+		assert.Equal(apiserver.PodDeleteResult{
+			Identifier: apiserver.PodIdentifier{
+				Name:      "testPod",
+				Namespace: "default",
+			},
+			Success: true}, <-deleteResults)
+	}
 
 	l, _ = clientset.CoreV1().Pods("").List(metav1.ListOptions{})
 	assert.Equal(1, len(l.Items))

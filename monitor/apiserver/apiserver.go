@@ -9,14 +9,21 @@ import (
 )
 
 type HealthStatus struct {
-	ErrorCount uint32
-	LastSeen   time.Time
-	IsDeleted  bool
+	ErrorCount      uint32
+	LastSeen        time.Time
+	IsDeleted       bool
+	IsDeletePending bool
+	HasDeleteError  bool
 }
 
 type PodIdentifier struct {
 	Name      string
 	Namespace string
+}
+
+type PodDeleteResult struct {
+	Identifier PodIdentifier
+	Success    bool
 }
 
 type HealthMonitor struct {
@@ -26,12 +33,34 @@ type HealthMonitor struct {
 	Lock           sync.Mutex
 }
 
-func NewHealthMonitor(podDeletes chan<- PodIdentifier, errorThreshold uint32) *HealthMonitor {
-	return &HealthMonitor{
+func NewHealthMonitor(podDeletes chan<- PodIdentifier, deleteResult <-chan PodDeleteResult, errorThreshold uint32) *HealthMonitor {
+	hm := &HealthMonitor{
 		Pods:           make(map[PodIdentifier]*HealthStatus),
 		PodDeletes:     podDeletes,
 		ErrorThreshold: errorThreshold,
 	}
+
+	go func() {
+		for {
+			delRes := <-deleteResult
+
+			hm.Lock.Lock()
+			if healthStatus, p := hm.Pods[delRes.Identifier]; p {
+				if delRes.Success {
+					healthStatus.HasDeleteError = false
+					healthStatus.IsDeletePending = false
+					healthStatus.IsDeleted = true
+				} else {
+					healthStatus.HasDeleteError = true
+					healthStatus.IsDeletePending = false
+					healthStatus.IsDeleted = false
+				}
+			}
+			hm.Lock.Unlock()
+		}
+	}()
+
+	return hm
 }
 
 func (hm *HealthMonitor) PostHealth(ctx echo.Context, params PostHealthParams) error {
@@ -44,14 +73,20 @@ func (hm *HealthMonitor) PostHealth(ctx echo.Context, params PostHealthParams) e
 	}
 
 	if healthStatus, p := hm.Pods[podIdentifier]; p {
+		if healthStatus.IsDeleted || healthStatus.IsDeletePending {
+			return ctx.NoContent(http.StatusInternalServerError)
+		}
 		if params.IsHealthy {
 			healthStatus.ErrorCount = 0
+			healthStatus.HasDeleteError = false
+			healthStatus.IsDeletePending = false
+			healthStatus.IsDeleted = false
 		} else {
 			healthStatus.ErrorCount++
 		}
 		healthStatus.LastSeen = time.Now()
-		if healthStatus.ErrorCount >= hm.ErrorThreshold && !healthStatus.IsDeleted {
-			healthStatus.IsDeleted = true
+		if healthStatus.ErrorCount >= hm.ErrorThreshold && !healthStatus.IsDeleted && !healthStatus.IsDeletePending {
+			healthStatus.IsDeletePending = true
 			hm.PodDeletes <- podIdentifier
 		}
 		return ctx.NoContent(http.StatusOK)
