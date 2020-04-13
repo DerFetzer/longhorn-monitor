@@ -9,8 +9,12 @@ import (
 	"github.com/deepmap/oapi-codegen/pkg/middleware"
 	"github.com/derfetzer/longhorn-monitor/monitor/v2/apiserver"
 
+	gommonlog "github.com/labstack/gommon/log"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"github.com/ziflex/lecho/v2"
+
 	"github.com/labstack/echo/v4"
-	echomiddleware "github.com/labstack/echo/v4/middleware"
 
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -30,7 +34,7 @@ func initConfig() *MonitorConfig {
 	if v, err := strconv.ParseUint(restartThreshold, 10, 32); err == nil {
 		cfg.RestartThreshold = uint32(v)
 	} else {
-		panic("RESTART_THRESHOLD environment variable has to be set!")
+		log.Fatal().Err(err).Msg("RESTART_THRESHOLD environment variable could not be parsed")
 	}
 
 	debug := os.Getenv("DEBUG")
@@ -43,16 +47,27 @@ func initConfig() *MonitorConfig {
 	return cfg
 }
 
+func initLogging(config *MonitorConfig) {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
+
+	log.Logger = log.With().Caller().Logger()
+
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if config.Debug {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+}
+
 func initKubernetes() kubernetes.Interface {
 	// creates the in-cluster config
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		panic(err.Error())
+		log.Fatal().Err(err).Msg("Could not create in-cluster config")
 	}
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		log.Fatal().Err(err).Msg("Could not create clientset")
 	}
 
 	return clientset
@@ -61,8 +76,7 @@ func initKubernetes() kubernetes.Interface {
 func initWebServer(healthMonitor *apiserver.HealthMonitor) *echo.Echo {
 	swagger, err := apiserver.GetSwagger()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error loading swagger spec\n: %s", err)
-		os.Exit(1)
+		log.Fatal().Err(err).Msg("Error loading swagger spec")
 	}
 
 	// Clear out the servers array in the swagger spec, that skips validating
@@ -72,8 +86,16 @@ func initWebServer(healthMonitor *apiserver.HealthMonitor) *echo.Echo {
 	// This is how you set up a basic Echo router
 	e := echo.New()
 
+	logger := lecho.New(
+		os.Stderr,
+		lecho.WithLevel(gommonlog.INFO),
+		lecho.WithTimestamp(),
+		lecho.WithCaller(),
+	)
+	e.Logger = logger
+
 	// Log all requests
-	e.Use(echomiddleware.Logger())
+	e.Use(lecho.Middleware(lecho.Config{Logger: logger}))
 	// Use our validation middleware to check all requests against the
 	// OpenAPI schema.
 	e.Use(middleware.OapiRequestValidator(swagger))
@@ -94,13 +116,18 @@ func deletePod(podDeletes <-chan apiserver.PodIdentifier, deleteResults chan<- a
 		podClient := clientset.CoreV1().Pods(podIdentifier.Namespace)
 		err := podClient.Delete(podIdentifier.Name, &metav1.DeleteOptions{})
 		if errors.IsNotFound(err) {
-			fmt.Printf("Pod %v not found\n", podIdentifier.Name)
-		} else if statusError, isStatus := err.(*errors.StatusError); isStatus {
-			fmt.Printf("Error deleting pod %v\n", statusError.ErrStatus.Message)
+			log.Warn().
+				Interface("podIdentifier", podIdentifier).
+				Msg("Pod not found")
 		} else if err != nil {
-			panic(err.Error())
+			log.Error().
+				Err(err).
+				Interface("podIdentifier", podIdentifier).
+				Msg("Error deleting pod")
 		} else {
-			fmt.Printf("Pod %v deleted\n", podIdentifier.Name)
+			log.Info().
+				Interface("podIdentifier", podIdentifier).
+				Msg("Pod deleted")
 			deleteResults <- apiserver.PodDeleteResult{Identifier: podIdentifier, Success: true}
 			return
 		}
@@ -113,6 +140,7 @@ func main() {
 	flag.Parse()
 
 	config := initConfig()
+	initLogging(config)
 	clientset := initKubernetes()
 	podDeletes := make(chan apiserver.PodIdentifier)
 	deleteResults := make(chan apiserver.PodDeleteResult)

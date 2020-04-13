@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/derfetzer/longhorn-monitor/healthcheck/v2/apiclient"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 type HealthCheckConfig struct {
@@ -22,20 +24,28 @@ type PodInfo struct {
 	Namespace string
 }
 
+func initLogging() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
+
+	log.Logger = log.With().Caller().Logger()
+
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+}
+
 func initConfig() *HealthCheckConfig {
 	cfg := &HealthCheckConfig{}
 
 	if v, p := os.LookupEnv("MONITOR_SVC"); p {
 		cfg.MonitorService = v
 	} else {
-		panic("MONITOR_SVC environment variable has to be set!")
+		log.Fatal().Msg("MONITOR_SVC environment variable has to be set")
 	}
 
 	if v, p := os.LookupEnv("INTERVAL"); p {
 		if conv, err := strconv.ParseUint(v, 10, 32); err == nil {
 			cfg.Interval = uint32(conv)
 		} else {
-			panic("INTERVAL environment variable could no be parsed ti unit32!")
+			log.Fatal().Err(err).Msg("INTERVAL environment variable could no be parsed")
 		}
 	} else {
 		cfg.Interval = 60
@@ -50,13 +60,13 @@ func initPodInfo() *PodInfo {
 	if v, p := os.LookupEnv("HOSTNAME"); p {
 		podInfo.Name = v
 	} else {
-		panic("HOSTNAME environment variable has to be set!")
+		log.Fatal().Msg("HOSTNAME environment variable has to be set")
 	}
 
 	if v, p := os.LookupEnv("NAMESPACE"); p {
 		podInfo.Namespace = v
 	} else {
-		panic("NAMSPACE environment variable has to be set!")
+		log.Fatal().Msg("NAMSPACE environment variable has to be set")
 	}
 
 	return podInfo
@@ -64,6 +74,9 @@ func initPodInfo() *PodInfo {
 
 func checkPvc() bool {
 	err := ioutil.WriteFile("/pvc/probe", []byte{0x42}, 0644)
+	if err != nil {
+		log.Error().Err(err).Msg("Could not write probe file")
+	}
 	return err == nil
 }
 
@@ -73,7 +86,7 @@ func main() {
 
 	client, err := apiclient.NewClient(config.MonitorService)
 	if err != nil {
-		panic("Could not create API client! " + err.Error())
+		log.Fatal().Err(err).Msg("Could not create API client")
 	}
 
 	sigCh := make(chan os.Signal)
@@ -91,11 +104,15 @@ func main() {
 				isHealthy := checkPvc()
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
-				client.PostHealth(ctx, &apiclient.PostHealthParams{
+				_, err := client.PostHealth(ctx, &apiclient.PostHealthParams{
 					IsHealthy: isHealthy,
 					PodName:   podInfo.Name,
 					Namespace: podInfo.Namespace,
 				})
+
+				if err != nil {
+					log.Error().Err(err).Msg("Could not post health to monitor")
+				}
 
 				cancel()
 			}
@@ -104,15 +121,21 @@ func main() {
 
 	select {
 	case <-sigCh:
+		log.Info().Msg("Container will be terminated")
+
 		ticker.Stop()
 		done <- true
 
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 
-		client.DeleteHealth(ctx, &apiclient.DeleteHealthParams{
+		_, err := client.DeleteHealth(ctx, &apiclient.DeleteHealthParams{
 			PodName:   podInfo.Name,
 			Namespace: podInfo.Namespace,
 		})
+
+		if err != nil {
+			log.Error().Err(err).Msg("Could not delete health from monitor")
+		}
 
 		cancel()
 	}

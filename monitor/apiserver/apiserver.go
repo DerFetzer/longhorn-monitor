@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog/log"
 )
 
 type HealthStatus struct {
@@ -72,8 +73,19 @@ func (hm *HealthMonitor) PostHealth(ctx echo.Context, params PostHealthParams) e
 		Namespace: params.Namespace,
 	}
 
+	log.Debug().
+		Interface("podIdentifier", podIdentifier).
+		Interface("params", params).
+		Msg("Post health for pod")
+
 	if healthStatus, p := hm.Pods[podIdentifier]; p {
 		if healthStatus.IsDeleted || healthStatus.IsDeletePending {
+			log.Warn().
+				Interface("podIdentifier", podIdentifier).
+				Interface("params", params).
+				Interface("healthStatus", healthStatus).
+				Msg("Pod is already deleted or deletion is pending")
+
 			return ctx.NoContent(http.StatusInternalServerError)
 		}
 		if params.IsHealthy {
@@ -86,11 +98,21 @@ func (hm *HealthMonitor) PostHealth(ctx echo.Context, params PostHealthParams) e
 		}
 		healthStatus.LastSeen = time.Now()
 		if healthStatus.ErrorCount >= hm.ErrorThreshold && !healthStatus.IsDeleted && !healthStatus.IsDeletePending {
+			log.Info().
+				Interface("podIdentifier", podIdentifier).
+				Interface("params", params).
+				Interface("healthStatus", healthStatus).
+				Msg("Pod is unhealthy and will be deleted")
 			healthStatus.IsDeletePending = true
 			hm.PodDeletes <- podIdentifier
 		}
 		return ctx.NoContent(http.StatusOK)
 	}
+
+	log.Info().
+		Interface("podIdentifier", podIdentifier).
+		Interface("params", params).
+		Msg("New pod registered")
 
 	if params.IsHealthy {
 		hm.Pods[podIdentifier] = &HealthStatus{ErrorCount: 0, LastSeen: time.Now()}
@@ -129,8 +151,16 @@ func (hm *HealthMonitor) DeleteHealth(ctx echo.Context, params DeleteHealthParam
 
 	if _, p := hm.Pods[podIdentifier]; p {
 		delete(hm.Pods, podIdentifier)
+		log.Info().
+			Interface("podIdentifier", podIdentifier).
+			Interface("params", params).
+			Msg("Deleted pod entry")
 		return ctx.NoContent(http.StatusOK)
 	}
 
+	log.Warn().
+		Interface("podIdentifier", podIdentifier).
+		Interface("params", params).
+		Msg("Pod entry not found for deletion")
 	return ctx.NoContent(http.StatusNotFound)
 }
