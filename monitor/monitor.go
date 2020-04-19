@@ -7,7 +7,7 @@ import (
 	"strconv"
 
 	"github.com/deepmap/oapi-codegen/pkg/middleware"
-	"github.com/derfetzer/longhorn-monitor/monitor/v2/apiserver"
+	"github.com/derfetzer/longhorn-monitor/monitor/apiserver"
 
 	gommonlog "github.com/labstack/gommon/log"
 	"github.com/rs/zerolog"

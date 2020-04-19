@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/derfetzer/longhorn-monitor/monitor/v2/apiserver"
+	"github.com/derfetzer/longhorn-monitor/monitor/apiserver"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"

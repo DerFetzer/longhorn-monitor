@@ -1,4 +1,4 @@
-module github.com/derfetzer/longhorn-monitor/webhook/v2
+module github.com/derfetzer/longhorn-monitor/webhook
 
 go 1.14
 

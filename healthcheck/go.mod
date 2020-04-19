@@ -1,4 +1,4 @@
-module github.com/derfetzer/longhorn-monitor/healthcheck/v2
+module github.com/derfetzer/longhorn-monitor/healthcheck
 
 go 1.14
 

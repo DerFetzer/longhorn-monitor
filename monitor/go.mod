@@ -1,4 +1,4 @@
-module github.com/derfetzer/longhorn-monitor/monitor/v2
+module github.com/derfetzer/longhorn-monitor/monitor
 
 go 1.14
 

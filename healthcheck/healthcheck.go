@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/derfetzer/longhorn-monitor/healthcheck/v2/apiclient"
+	"github.com/derfetzer/longhorn-monitor/healthcheck/apiclient"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
