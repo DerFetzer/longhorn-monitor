@@ -1,10 +1,22 @@
 language: go
 
 go:
-- "1.14"
+  - "1.14"
 
 jobs:
   include:
-    - before_install: cd webhook
-    - before_install: cd healthcheck
-    - before_install: cd monitor
+    - stage: test
+      name: test_webhook
+      before_install: cd webhook
+    - stage: test
+      name: test_healthcheck
+      before_install: cd healthcheck
+    - stage: test
+      name: test_monitor
+      before_install: cd monitor
+    - stage: docker
+      name: docker
+      language: minimal
+      services:
+        - docker
+      script: docker build -t derfetzer/longhorn-monitor .
