@@ -16,9 +16,10 @@ import (
 )
 
 type config struct {
-	certFile   string
-	keyFile    string
-	monitorSvc string
+	certFile         string
+	keyFile          string
+	monitorSvc       string
+	healthcheckImage string
 }
 
 func initFlags() *config {
@@ -34,6 +35,12 @@ func initFlags() *config {
 		cfg.monitorSvc = v
 	} else {
 		panic("MONITOR_SVC environment variable has to be set!")
+	}
+
+	if v, p := os.LookupEnv("HEALTHCHECK_IMAGE"); p {
+		cfg.healthcheckImage = v
+	} else {
+		cfg.healthcheckImage = "derfetzer/longhorn-monitor:dev"
 	}
 
 	return cfg
@@ -56,7 +63,7 @@ func main() {
 			if name, ok := pod.Annotations["der-fetzer.de/longhorn-monitor.volume-name"]; ok {
 				container := corev1.Container{
 					Name:    "pvc-health-check",
-					Image:   "derfetzer/longhorn-monitor:dev",
+					Image:   cfg.healthcheckImage,
 					Command: []string{"/usr/local/bin/longhorn-monitor/healthcheck"},
 					Env: []corev1.EnvVar{
 						corev1.EnvVar{
