@@ -1,0 +1,10 @@
+language: go
+
+go:
+- "1.14"
+
+jobs:
+  include:
+    - before_install: cd webhook
+    - before_install: cd healthcheck
+    - before_install: cd monitor
