@@ -129,7 +129,7 @@ func deletePod(podDeletes <-chan apiserver.PodIdentifier, deleteResults chan<- a
 				Interface("podIdentifier", podIdentifier).
 				Msg("Pod deleted")
 			deleteResults <- apiserver.PodDeleteResult{Identifier: podIdentifier, Success: true}
-			return
+			continue
 		}
 		deleteResults <- apiserver.PodDeleteResult{Identifier: podIdentifier, Success: false}
 	}
