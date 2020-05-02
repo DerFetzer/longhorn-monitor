@@ -72,12 +72,12 @@ func initPodInfo() *PodInfo {
 	return podInfo
 }
 
-func checkPvc() bool {
+func checkPvc(result chan<- bool) {
 	err := ioutil.WriteFile("/pvc/probe", []byte{0x42}, 0644)
 	if err != nil {
 		log.Error().Err(err).Msg("Could not write probe file")
 	}
-	return err == nil
+	result <- err == nil
 }
 
 func main() {
@@ -101,7 +101,19 @@ func main() {
 			case <-done:
 				return
 			case <-ticker.C:
-				isHealthy := checkPvc()
+				result := make(chan bool, 1)
+				go checkPvc(result)
+
+				var isHealthy bool
+
+				select {
+				case res := <-result:
+					isHealthy = res
+				case <-time.After(2 * time.Second):
+					isHealthy = false
+					log.Error().Err(err).Msg("Timeout while writing probe file")
+				}
+
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 
 				_, err := client.PostHealth(ctx, &apiclient.PostHealthParams{
